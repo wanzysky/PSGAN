@@ -22,7 +22,7 @@ I have added GPU inference, multiple-gpu support and optimized training and infe
 
 1. `python3 demo.py` or `python3 demo.py --device cuda` for gpu inference.
 
-NOTE: You need dlib support for fully gpu inference.
+NOTE: You need dlib gpu support for fully gpu inference.
 
 ## Train
 1. Download dataset from [here]().
