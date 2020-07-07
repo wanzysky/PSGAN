@@ -1,8 +1,8 @@
 # PSGAN
 
-Code for our CVPR 2020 **oral** paper "[PSGAN: Pose and Expression Robust Spatial-Aware GAN for Customizable Makeup Transfer](https://arxiv.org/abs/1909.06956)".
+This project is forked from the official implementation of PSGAN: "[PSGAN: Pose and Expression Robust Spatial-Aware GAN for Customizable Makeup Transfer](https://arxiv.org/abs/1909.06956)". 
 
-Contributed by [Wentao Jiang](https://wtjiang98.github.io), [Si Liu](http://colalab.org/people), Chen Gao, Jie Cao, Ran He, [Jiashi Feng](https://sites.google.com/site/jshfeng/), [Shuicheng Yan](https://www.ece.nus.edu.sg/stfpage/eleyans/)
+I have added GPU inference, multiple-gpu support and optimized training and inference speed.
 
 ![](psgan_framework.png)
 
@@ -11,17 +11,22 @@ Contributed by [Wentao Jiang](https://wtjiang98.github.io), [Si Liu](http://cola
 - [ ] video demos
 - [ ] partial makeup transfer example
 - [ ] interpolated makeup transfer example
-- [ ] inference on GPU
-- [ ] training code
+- [x] inference on GPU
+- [x] training code
 
 
 ## Requirements
-   The code was tested on Ubuntu 16.04, with Python 3.6 and PyTorch 1.0.
+   The code was tested on Ubuntu 16.04, with Python 3.6 and PyTorch 1.5.
 
 ## Test
 
-1. modify the image files for makeup transfer in ``makeup/main.py`` (optional)
-2. run ``makeup/main.py``
+1. `python3 demo.py` or `python3 demo.py --device cuda` for gpu inference.
+
+NOTE: You need dlib support for fully gpu inference.
+
+## Train
+1. Download dataset from [here]().
+2. Check config.py to modify `default.data_path` to your data path.
   
 ## More Results
 
