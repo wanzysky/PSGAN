@@ -3,6 +3,7 @@
 import os.path as osp
 pwd = osp.split(osp.realpath(__file__))[0]
 import sys
+import time
 sys.path.append(pwd + '/..')
 
 import numpy as np
@@ -12,129 +13,71 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.backends import cudnn
 from torchvision import transforms
+import cv2
+from neupeak.utils import webcv2
+from smart_path import smart_path
+from fire import Fire
+from tqdm import tqdm
 
 import faceutils as futils
 from makeup.solver_makeup import Solver_makeupGAN
+from makeup.preprocess import preprocess
 
 cudnn.benchmark = True
 solver = Solver_makeupGAN()
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5])])
+def load_image(path: smart_path):
+    with path.open("rb") as reader:
+        data = np.fromstring(reader.read(), dtype=np.uint8)
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if img is None:
+            return
+        img = img[..., ::-1]
+    return img
 
+def main(
+    makeup_dir="faces/makeup",
+    non_makeup_dir="faces/no_makeup",
+    img_size=256,
+    speed=False):
+    makeup_dir = smart_path(makeup_dir)
+    non_makeup_dir = smart_path(non_makeup_dir)
 
-def ToTensor(pic):
-    # handle PIL Image
-    if pic.mode == 'I':
-        img = torch.from_numpy(np.array(pic, np.int32, copy=False))
-    elif pic.mode == 'I;16':
-        img = torch.from_numpy(np.array(pic, np.int16, copy=False))
-    else:
-        img = torch.ByteTensor(torch.ByteStorage.from_buffer(pic.tobytes()))
-    # PIL image mode: 1, L, P, I, F, RGB, YCbCr, RGBA, CMYK
-    if pic.mode == 'YCbCr':
-        nchannel = 3
-    elif pic.mode == 'I;16':
-        nchannel = 1
-    else:
-        nchannel = len(pic.mode)
-    img = img.view(pic.size[1], pic.size[0], nchannel)
-    # put it from HWC to CHW format
-    # yikes, this transpose takes 80% of the loading time/CPU
-    img = img.transpose(0, 1).transpose(0, 2).contiguous()
-    if isinstance(img, torch.ByteTensor):
-        return img.float()
-    else:
-        return img
+    makeup_paths = list(makeup_dir.glob("*"))
+    non_makeup_paths = list(non_makeup_dir.glob("*"))
 
+    assert len(makeup_paths) > 0
+    assert len(non_makeup_paths) > 0
 
-def to_var(x, requires_grad=True):
-    if requires_grad:
-        return Variable(x).float()
-    else:
-        return Variable(x, requires_grad=requires_grad).float()
+    random = np.random.RandomState(seed=0)
+    while True:
+        makeup_path = random.choice(makeup_paths)
+        ant_makeup_path = random.choice(makeup_paths)
+        non_makeup_path = random.choice(non_makeup_paths)
+        
+        makeup_image = load_image(makeup_path)
+        non_makeup_image = load_image(non_makeup_path)
+        if makeup_image is None or non_makeup_image is None:
+            continue
 
+        transferred_image = solver.test(
+            *preprocess(Image.fromarray(non_makeup_image)),
+            *preprocess(Image.fromarray(makeup_image)))
+        if speed:
+            input_1 = preprocess(Image.fromarray(non_makeup_image))
+            input_2 = preprocess(Image.fromarray(makeup_image))
+            start = time.time()
+            for _ in tqdm(range(100)):
+                transferred_image = solver.test(*input_1, *input_2)
 
-def copy_area(tar, src, lms):
-    rect = [int(min(lms[:, 1])) - preprocess.eye_margin, 
-            int(min(lms[:, 0])) - preprocess.eye_margin, 
-            int(max(lms[:, 1])) + preprocess.eye_margin + 1, 
-            int(max(lms[:, 0])) + preprocess.eye_margin + 1]
-    tar[:, :, rect[1]:rect[3], rect[0]:rect[2]] = \
-        src[:, :, rect[1]:rect[3], rect[0]:rect[2]]
+            print("inference time", time.time() - start)
 
-
-def preprocess(image: Image):
-    face = futils.dlib.detect(image)
-
-    assert face, "no faces detected"
-
-    face = face[0]
-    image, face = futils.dlib.crop(image, face)
-
-    # detect landmark
-    lms = futils.dlib.landmarks(image, face) * 256 / image.width
-    lms = lms.round()
-    lms_eye_left = lms[42:48]
-    lms_eye_right = lms[36:42]
-    lms = lms.transpose((1, 0)).reshape(-1, 1, 1)   # transpose to (y-x)
-    lms = np.tile(lms, (1, 256, 256))  # (136, h, w)
-
-    # calculate relative position for each pixel
-    fix = np.zeros((256, 256, 68 * 2))
-    for i in range(256):  # row (y) h
-        for j in range(256):  # column (x) w
-            fix[i, j, :68] = i
-            fix[i, j, 68:] = j
-    fix = fix.transpose((2, 0, 1))  # (138, h, w)
-    diff = to_var(torch.Tensor(fix - lms).unsqueeze(0), requires_grad=False)
-
-    # obtain face parsing result
-    image = image.resize((512, 512), Image.ANTIALIAS)
-    mask = futils.mask.mask(image).resize((256, 256), Image.ANTIALIAS)
-    mask = to_var(ToTensor(mask).unsqueeze(0), requires_grad=False)
-    mask_lip = (mask == 7).float() + (mask == 9).float()
-    mask_face = (mask == 1).float() + (mask == 6).float()
-
-    mask_eyes = torch.zeros_like(mask)
-    copy_area(mask_eyes, mask_face, lms_eye_left)
-    copy_area(mask_eyes, mask_face, lms_eye_right)
-    mask_eyes = to_var(mask_eyes, requires_grad=False)
-
-    mask_list = [mask_lip, mask_face, mask_eyes]
-    mask_aug = torch.cat(mask_list, 0)      # (3, 1, h, w)
-    mask_re = F.interpolate(mask_aug, size=preprocess.diff_size).repeat(1, diff.shape[1], 1, 1)  # (3, 136, 64, 64)
-    diff_re = F.interpolate(diff, size=preprocess.diff_size).repeat(3, 1, 1, 1)  # (3, 136, 64, 64)
-    diff_re = diff_re * mask_re             # (3, 136, 32, 32)
-    norm = torch.norm(diff_re, dim=1, keepdim=True).repeat(1, diff_re.shape[1], 1, 1)
-    norm = torch.where(norm == 0, torch.tensor(1e10), norm)
-    diff_re /= norm
-
-    image = image.resize((256, 256), Image.ANTIALIAS)
-    real = to_var(transform(image).unsqueeze(0))
-    return [real, mask_aug, diff_re]
-
-
-# parameter of eye transfer
-preprocess.eye_margin = 16
-# down sample size
-preprocess.diff_size = (64, 64)
+        webcv2.imshow("source", non_makeup_image[..., ::-1])
+        webcv2.imshow("reference", makeup_image[..., ::-1])
+        webcv2.imshow("result", np.array(transferred_image)[..., ::-1])
+        webcv2.waitKey()
 
 
 if __name__ == '__main__':
     # source image, reference image
-    images = ['xfsy_0106.png', 'vFG586.png']
-    images = [Image.open(image) for image in images]
-    images = [preprocess(image) for image in images]
-    transferred_image = solver.test(*(images[0]), *(images[1]))
-    transferred_image.save('transferred_image.png')
-
-
-
-
-
-
-
-
-
+    Fire(main)
