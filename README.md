@@ -4,6 +4,8 @@ This project is forked from the official implementation of PSGAN: "[PSGAN: Pose 
 
 I have added GPU inference, multiple-gpu support and optimized training and inference speed.
 
+*NOTE*: This repo is merged into [PSGAN](https://github.com/wtjiang98/PSGAN), where new updates will be commited to.
+
 ![](psgan_framework.png)
 
 ## Checklist
